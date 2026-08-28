@@ -29,6 +29,7 @@ the right to say it.
 | 7 | [Token economics](notebooks/07_token_economics.ipynb) | [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/lsgrep/serv/blob/main/notebooks/07_token_economics.ipynb) | CPU | Price a workload live: routing curves, break-even escalation, managed vs self-host with the FTE line visible |
 | 8 | [RAG and the eval harness](notebooks/08_rag_and_evals.ipynb) | [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/lsgrep/serv/blob/main/notebooks/08_rag_and_evals.ipynb) | CPU | Retrieval measured on its own, the retrieval-vs-synthesis triage, a calibrated judge and a regression gate |
 | 9 | [Serving levers, measured](notebooks/09_serving_levers.ipynb) | [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/lsgrep/serv/blob/main/notebooks/09_serving_levers.ipynb) | T4 / L4 | Prefix caching, chunked prefill, FP8 KV, speculative decoding, TP — each with the workload where it does nothing |
+| 10 | [A fine-tune, and what it taught](notebooks/10_finetune_what_it_teaches.ipynb) | [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/lsgrep/serv/blob/main/notebooks/10_finetune_what_it_teaches.ipynb) | T4 | One LoRA, measured on two axes: format compliance jumps, held-out factual recall barely moves, retrieval beats it |
 Each notebook also carries that badge in its own first cell, so however you
 arrive at one, it is a click away from running.
 
@@ -57,7 +58,7 @@ Every notebook is idempotent, so a disconnect costs three minutes.
 ```bash
 git clone https://github.com/lsgrep/serv.git && cd serv
 pip install -e ".[plot,load,dev]"
-pytest -q                                    # 108 tests, CPU only, ~7s
+pytest -q                                    # 124 tests, CPU only, ~7s
 
 # no GPU? the scheduler still reproduces the dynamics
 python -c "
@@ -103,6 +104,7 @@ scheduling policy stay testable on a CPU runner:
 | `monitor`, `loadgen`, `serve` | network | Metrics poller, open/closed-loop generators, background `vllm serve` |
 | `pricing` | nothing | Token economics: a price table you maintain, routing curves, managed-vs-self-host |
 | `rag` | nothing | Chunking, BM25, hybrid fusion, recall@k — and the retrieval-vs-synthesis triage |
+| `finetune` | nothing | Paired train/held-out datasets and scorers for the fine-tuning experiment |
 | `drills` | nothing | Randomised whiteboard problems with worked answers |
 | `evalkit` | network | Quantisation eval, judge calibration, sample-size maths, the regression gate |
 | `gateway` | network | A thin multi-provider client, and a computed exit cost |

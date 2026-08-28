@@ -128,6 +128,26 @@ just memory you stopped using for KV" is experience.
 Being able to name the case where your own recommendation is wrong is the
 strongest form of the recommendation.
 
+## 10 — A fine-tune, and what it taught
+
+**Question:** we keep saying fine-tuning teaches style rather than knowledge.
+Is that true?
+
+**Why last:** because it is the only lab whose job is to test one of this
+repo's own assertions, and it needs lab 8's corpus and lab 4's machinery to do
+it. One LoRA is trained on two kinds of data at once — a strict output format
+and closed-book facts — and then the two axes are measured separately.
+
+The design is the lesson: the knowledge questions in the test set ask about the
+**same facts in different words** than the training set. Scoring on phrasings
+you trained on measures memorisation, which is what most fine-tuning demos
+actually report.
+
+**The transferable insight:** fine-tuning and retrieval are orthogonal, not
+alternatives — behaviour versus facts. And the regression check afterwards
+(does it still answer trivia, or does it emit JSON at everything now?) takes two
+minutes and almost nobody runs it.
+
 ---
 
 ## What the ladder does not cover

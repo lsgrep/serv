@@ -19,6 +19,10 @@ running a lab — to find the sentence it entitles you to say.
 | "GQA is a KV-cache optimisation — it's KV heads, not attention heads" | The 4x error, drawn, on four real model configs | [03](../notebooks/03_kv_math_and_toy_engine.ipynb) |
 | "Batching is nearly free until the KV term catches up" | Arithmetic intensity against the ridge point, then the measured sweep | [02](../notebooks/02_hardware_economics.ipynb), [03](../notebooks/03_kv_math_and_toy_engine.ipynb) |
 | "Retrieval fixes knowledge; fine-tuning fixes style" | The 34-of-40 triage, run on a corpus you can show | [08](../notebooks/08_rag_and_evals.ipynb) |
+| ...and the measured version, with numbers from your own run | One LoRA scored on format, seen phrasings, held-out phrasings, and retrieval | [10](../notebooks/10_finetune_what_it_teaches.ipynb) |
+| "The legitimate reasons to fine-tune are format, distillation, tone and refusals" | The format task going from a third of responses to nearly all | [10](../notebooks/10_finetune_what_it_teaches.ipynb) |
+| "Catastrophic forgetting is real — here's what it looks like" | The capability probe, before and after | [10](../notebooks/10_finetune_what_it_teaches.ipynb) |
+| "Testing on phrasings you trained on measures memorisation" | Paired train/held-out splits over identical facts | [10](../notebooks/10_finetune_what_it_teaches.ipynb) |
 | "The eval harness is the portability layer" | A regression gate, plus a computed exit cost | [08](../notebooks/08_rag_and_evals.ipynb), [07](../notebooks/07_token_economics.ipynb) |
 
 ## Cost and the self-host question
@@ -95,8 +99,9 @@ Say this plainly if asked, so the gaps are deliberate rather than discovered:
   arithmetic; nothing here runs a multi-host deployment.
 * **Writing kernels** — flash attention, paged attention, Triton, Pallas. Lab 3
   implements the scheduling *policy* and explicitly not the kernel.
-* **Training at scale** — FSDP, pipeline parallelism, data pipelines. Lab 4 is
-  single-card fine-tuning.
+* **Training at scale** — FSDP, pipeline parallelism, real data pipelines,
+  preference tuning (DPO/RLHF). Labs 4 and 10 are single-card supervised
+  fine-tuning on small models.
 * **Production operations** — autoscaling on queue depth, canaries, request
   hedging, multi-tenant fairness.
 * **Agent architectures** — planning loops, tool selection, multi-hop latency

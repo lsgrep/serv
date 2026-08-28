@@ -5,7 +5,8 @@ The exec conversation this module exists to support:
     "The answers are wrong, so the model is bad, so let's fine-tune."
 
 Fine-tuning teaches style and format. It does not install knowledge the system
-was never handed. Before touching a model you pull the failures and split them
+was never handed — `servlab.finetune` and lab 10 measure that rather than
+assuming it. Before touching a model you pull the failures and split them
 into two buckets — **the right passage was never retrieved** (a retrieval
 problem, cheap to fix) versus **it was retrieved and the answer is still wrong**
 (a synthesis problem, and the only bucket where a model change is even the right
