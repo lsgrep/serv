@@ -14,7 +14,11 @@ running a lab — to find the sentence it entitles you to say.
 
 | The claim | The receipt | Lab |
 |---|---|---|
-| "Decode is memory-bandwidth bound; prefill is compute bound, and everything follows from that" | You derived both, then measured GPT-2 with and without a KV cache | [03](../notebooks/03_kv_math_and_toy_engine.ipynb) |
+| "Decode is memory-bandwidth bound; prefill is compute bound, and everything follows from that" | You derived both, then measured GPT-2 with and without a KV cache | [11](../notebooks/11_attention_from_scratch.ipynb), [03](../notebooks/03_kv_math_and_toy_engine.ipynb) |
+| "A KV cache is *correct* because masking is causal — an encoder couldn't have one" | Cached decoding proven equal to full recomputation, in a test | [11](../notebooks/11_attention_from_scratch.ipynb) |
+| "GQA is a repeat at inference — it buys concurrency, not speed" | The broadcast, and 80 GiB vs 10 GiB at 32K context | [11](../notebooks/11_attention_from_scratch.ipynb) |
+| "Flash attention saves memory traffic, not FLOPs" | Online softmax implemented, tiled output matched to naive, both costs printed | [11](../notebooks/11_attention_from_scratch.ipynb) |
+| "Prefix caching only works on prefixes because positions are rotated into the keys" | RoPE scores at the right and wrong offsets | [11](../notebooks/11_attention_from_scratch.ipynb) |
 | "Give me a config and a GPU and I'll tell you the concurrency ceiling" | `napkin.memory_report` against what the engine actually allocated | [03](../notebooks/03_kv_math_and_toy_engine.ipynb), [00](../notebooks/00_drills.ipynb) |
 | "GQA is a KV-cache optimisation — it's KV heads, not attention heads" | The 4x error, drawn, on four real model configs | [03](../notebooks/03_kv_math_and_toy_engine.ipynb) |
 | "Batching is nearly free until the KV term catches up" | Arithmetic intensity against the ridge point, then the measured sweep | [02](../notebooks/02_hardware_economics.ipynb), [03](../notebooks/03_kv_math_and_toy_engine.ipynb) |

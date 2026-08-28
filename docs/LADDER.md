@@ -3,6 +3,25 @@
 Each lab exists because there is a question it is the only way to answer. The
 order is not arbitrary: each one uses the previous one's vocabulary.
 
+## 11 — Attention from scratch
+
+**Question:** where do all these facts about KV caches actually come from?
+
+**Why it is numbered last and should be read first:** it was built last, after
+it became clear that every other lab *consumes* attention facts and none of them
+derive one. Memorised facts fail on the follow-up question, and the follow-up
+question here is always "why?".
+
+Forty minutes of numpy on tensors small enough to print: attention as a weighted
+lookup, causal masking as the property that makes an append-only cache *correct*
+rather than merely convenient, prefill and decode as one function at two shapes,
+online softmax and what flash attention therefore does and does not buy, and
+RoPE as the reason prefix caching only works on prefixes.
+
+**The transferable insight:** the KV cache is not a trick someone thought of. It
+is a direct consequence of causal masking, and once you have seen that, the rest
+of serving reads as engineering rather than folklore.
+
 ## 1 — Serving under load
 
 **Question:** what does an overloaded LLM server actually look like?

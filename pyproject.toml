@@ -12,11 +12,11 @@ dependencies = []
 [project.optional-dependencies]
 # The notebooks install what they need in cell 1; these extras exist so a
 # terminal box can be provisioned in one shot.
-plot  = ["matplotlib>=3.7", "pandas>=2.0"]
+plot  = ["matplotlib>=3.7", "pandas>=2.0", "numpy>=1.24"]
 load  = ["httpx>=0.27"]
 serve = ["vllm>=0.6.0"]
 train = ["torch", "transformers>=4.44", "peft>=0.12", "bitsandbytes>=0.43", "trl>=0.9", "datasets", "accelerate"]
-dev   = ["pytest>=7", "ruff>=0.6"]
+dev   = ["pytest>=7", "ruff>=0.6", "numpy>=1.24"]
 
 [tool.setuptools.packages.find]
 include = ["servlab*"]

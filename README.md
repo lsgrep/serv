@@ -4,8 +4,13 @@ Six labs that teach inference serving by making you measure it. Each one is a
 Colab notebook that runs on a free T4, backed by a small tested Python package
 so the notebooks stay narrative and the logic stays honest.
 
-Labs 0, 7 and 8 run on a laptop. The rest want a GPU, and the free tier is
+Labs 0, 7, 8 and 11 run on a laptop. The rest want a GPU, and the free tier is
 genuinely enough for all of them.
+
+**Where to start:** the numbering is build order, not learning order. Read
+**11 → 03 → 01** first — lab 11 derives the attention mechanics that lab 3's
+napkin math assumes and lab 1's failures are made of. After those three, the
+rest can be taken in any order.
 
 The organising idea: **predict on paper, then measure, then explain the gap.**
 A prediction within 2x means your mental model works. Off by 10x means a term is
@@ -30,6 +35,7 @@ the right to say it.
 | 8 | [RAG and the eval harness](notebooks/08_rag_and_evals.ipynb) | [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/lsgrep/serv/blob/main/notebooks/08_rag_and_evals.ipynb) | CPU | Retrieval measured on its own, the retrieval-vs-synthesis triage, a calibrated judge and a regression gate |
 | 9 | [Serving levers, measured](notebooks/09_serving_levers.ipynb) | [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/lsgrep/serv/blob/main/notebooks/09_serving_levers.ipynb) | T4 / L4 | Prefix caching, chunked prefill, FP8 KV, speculative decoding, TP — each with the workload where it does nothing |
 | 10 | [A fine-tune, and what it taught](notebooks/10_finetune_what_it_teaches.ipynb) | [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/lsgrep/serv/blob/main/notebooks/10_finetune_what_it_teaches.ipynb) | T4 | One LoRA, measured on two axes: format compliance jumps, held-out factual recall barely moves, retrieval beats it |
+| 11 | [Attention from scratch](notebooks/11_attention_from_scratch.ipynb) | [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/lsgrep/serv/blob/main/notebooks/11_attention_from_scratch.ipynb) | CPU | Derive the KV cache instead of quoting it — causal masking, GQA as a repeat, online softmax, and why prefix caching is a *prefix* cache |
 Each notebook also carries that badge in its own first cell, so however you
 arrive at one, it is a click away from running.
 
@@ -58,7 +64,7 @@ Every notebook is idempotent, so a disconnect costs three minutes.
 ```bash
 git clone https://github.com/lsgrep/serv.git && cd serv
 pip install -e ".[plot,load,dev]"
-pytest -q                                    # 124 tests, CPU only, ~7s
+pytest -q                                    # 149 tests, CPU only, ~7s
 
 # no GPU? the scheduler still reproduces the dynamics
 python -c "
@@ -103,6 +109,7 @@ scheduling policy stay testable on a CPU runner:
 | `toy.allocator`, `toy.scheduler` | nothing | Paged blocks, continuous batching, preemption — plus a GPU-free simulation of the death spiral |
 | `monitor`, `loadgen`, `serve` | network | Metrics poller, open/closed-loop generators, background `vllm serve` |
 | `pricing` | nothing | Token economics: a price table you maintain, routing curves, managed-vs-self-host |
+| `attention` | numpy | Attention, KV cache, GQA, flash tiling and RoPE, built from scratch |
 | `rag` | nothing | Chunking, BM25, hybrid fusion, recall@k — and the retrieval-vs-synthesis triage |
 | `finetune` | nothing | Paired train/held-out datasets and scorers for the fine-tuning experiment |
 | `drills` | nothing | Randomised whiteboard problems with worked answers |
