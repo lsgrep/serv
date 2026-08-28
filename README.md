@@ -14,22 +14,17 @@ the right to say it.
 
 ## The ladder
 
-| | Lab | Runs on | What you walk away with |
-|---|---|---|---|
-| 1 | [Serving under load](notebooks/01_serving_under_load.ipynb) | T4 | vLLM under overload, live: queue depth, KV cache, TTFT. Throughput holds while goodput collapses |
-| 2 | [Hardware economics](notebooks/02_hardware_economics.ipynb) | T4 → L4 → A100 | The same sweep on three cards. Cost per million tokens at your latency SLO |
-| 3 | [Napkin math + toy engine](notebooks/03_kv_math_and_toy_engine.ipynb) | T4 (or CPU) | The KV formula, and a paged-block engine with continuous batching and preemption that proves it |
-| 4 | [QLoRA and the OOM postmortem](notebooks/04_qlora_oom_postmortem.ipynb) | T4 | A training memory budget, a deliberate OOM, and an allocator snapshot that names the culprit |
-| 5 | [Quantisation: quality and cost](notebooks/05_quantization_quality_cost.ipynb) | T4 (FP8 needs L4) | FP16 vs INT4-AWQ on accuracy, latency, VRAM, cost — plus the distributional check people skip |
-| 6 | [TPU serving in JAX](notebooks/06_tpu_jax_serving.ipynb) | Colab TPU | Why static shapes make serving a padding-bucket problem, and what that says about CUDA |
+| | Lab | Open | Runs on | What you walk away with |
+|---|---|---|---|---|
+| 1 | [Serving under load](notebooks/01_serving_under_load.ipynb) | [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/lsgrep/serv/blob/main/notebooks/01_serving_under_load.ipynb) | T4 | vLLM under overload, live: queue depth, KV cache, TTFT. Throughput holds while goodput collapses |
+| 2 | [Hardware economics](notebooks/02_hardware_economics.ipynb) | [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/lsgrep/serv/blob/main/notebooks/02_hardware_economics.ipynb) | T4 → L4 → A100 | The same sweep on three cards. Cost per million tokens at your latency SLO |
+| 3 | [Napkin math + toy engine](notebooks/03_kv_math_and_toy_engine.ipynb) | [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/lsgrep/serv/blob/main/notebooks/03_kv_math_and_toy_engine.ipynb) | T4 (or CPU) | The KV formula, and a paged-block engine with continuous batching and preemption that proves it |
+| 4 | [QLoRA and the OOM postmortem](notebooks/04_qlora_oom_postmortem.ipynb) | [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/lsgrep/serv/blob/main/notebooks/04_qlora_oom_postmortem.ipynb) | T4 | A training memory budget, a deliberate OOM, and an allocator snapshot that names the culprit |
+| 5 | [Quantisation: quality and cost](notebooks/05_quantization_quality_cost.ipynb) | [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/lsgrep/serv/blob/main/notebooks/05_quantization_quality_cost.ipynb) | T4 (FP8 needs L4) | FP16 vs INT4-AWQ on accuracy, latency, VRAM, cost — plus the distributional check people skip |
+| 6 | [TPU serving in JAX](notebooks/06_tpu_jax_serving.ipynb) | [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/lsgrep/serv/blob/main/notebooks/06_tpu_jax_serving.ipynb) | Colab TPU | Why static shapes make serving a padding-bucket problem, and what that says about CUDA |
 
-Open any of them in Colab by replacing `github.com` with
-`colab.research.google.com/github` in the URL, or use the badges once this
-branch is merged to `main`:
-
-```
-https://colab.research.google.com/github/lsgrep/serv/blob/main/notebooks/01_serving_under_load.ipynb
-```
+Each notebook also carries that badge in its own first cell, so however you
+arrive at one, it is a click away from running.
 
 ## Then leave the notebook
 
