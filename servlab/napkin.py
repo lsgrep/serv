@@ -125,6 +125,37 @@ def gpu(name) -> GPUSpec:
     return name if isinstance(name, GPUSpec) else GPUS[str(name)]
 
 
+def spec_from_config(cfg, name=None, gated_mlp=True, tied_embeddings=None) -> ModelSpec:
+    """Build a `ModelSpec` from a HuggingFace config (or a plain dict).
+
+    Lets a notebook do the napkin math for whatever model it just pulled,
+    without downloading the weights first. The parameter count is estimated
+    from the shapes — embeddings, attention projections, MLP — which lands
+    within a couple of percent of the real count for standard decoder stacks.
+    """
+    get = (lambda k, d=None: getattr(cfg, k, d)) if not isinstance(cfg, dict) else (lambda k, d=None: cfg.get(k, d))
+    n_heads = get("num_attention_heads") or get("n_head")
+    n_layers = get("num_hidden_layers") or get("n_layer")
+    hidden = get("hidden_size") or get("n_embd")
+    n_kv = get("num_key_value_heads", n_heads) or n_heads
+    head_dim = get("head_dim") or hidden // n_heads
+    ffn = get("intermediate_size") or 4 * hidden
+    vocab = get("vocab_size")
+    if tied_embeddings is None:
+        tied_embeddings = bool(get("tie_word_embeddings", False))
+
+    q_dim = n_heads * head_dim
+    kv_dim = n_kv * head_dim
+    attn = hidden * q_dim + 2 * hidden * kv_dim + q_dim * hidden
+    mlp = (3 if gated_mlp else 2) * hidden * ffn
+    params = vocab * hidden * (1 if tied_embeddings else 2) + n_layers * (attn + mlp)
+    return ModelSpec(
+        name=name or str(get("_name_or_path", "model")),
+        n_layers=n_layers, n_heads=n_heads, n_kv_heads=n_kv, head_dim=head_dim,
+        hidden=hidden, ffn=ffn, vocab=vocab, params=float(params),
+    )
+
+
 # --------------------------------------------------------------------------
 # Memory
 # --------------------------------------------------------------------------
