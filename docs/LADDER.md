@@ -83,6 +83,51 @@ one visible as a choice.
 **The transferable insight:** memory arithmetic transfers across vendors;
 kernels and scheduling assumptions do not.
 
+## 7 — Token economics
+
+**Question:** what does this cost, and should we host it ourselves?
+
+**Why here:** it needs lab 2's cost framing, but it is a different question —
+lab 2 prices *GPUs*, this prices *tokens*, and most AI workloads are bought by
+the token. It is also the lab that most rewards being done out loud: the
+failure mode is not bad arithmetic, it is hedging.
+
+**The transferable insight:** four multipliers (batch, caching, prompt hygiene,
+thinking tokens) move a bill more than any model choice, and the fully-loaded
+self-host comparison has a line for people that is usually the largest one.
+
+## 8 — RAG and the eval harness
+
+**Question:** the answers are wrong. What is actually broken?
+
+**Why here:** it is the highest-leverage diagnostic in applied GenAI work, and
+it inverts the usual instinct. Splitting failures into *the passage was never
+retrieved* versus *it was retrieved and the answer is still wrong* relocates the
+problem in an hour, and only the second bucket is a model question at all.
+
+It also carries the measurement discipline the whole repo depends on: recall@k
+measured separately, a judge calibrated against humans before it is trusted,
+confidence intervals stated before anyone celebrates three points, and a
+regression gate that explains its own failures so people keep it switched on.
+
+**The transferable insight:** fine-tuning teaches style, not facts. Diagnose
+before prescribing, and make the diagnosis cheap enough that nobody has to be
+wrong out loud.
+
+## 9 — Serving levers, measured
+
+**Question:** those optimisations everyone lists — what does each one actually buy?
+
+**Why last:** lab 1's diagnosis playbook names them; this turns each into a
+number, including a control run showing the workload where it does nothing.
+That control is the whole point. "Enable prefix caching" is documentation.
+"Measure what share of your input is shared, because on unique prompts it is
+just memory you stopped using for KV" is experience.
+
+**The transferable insight:** every lever is a trade, and the workload decides.
+Being able to name the case where your own recommendation is wrong is the
+strongest form of the recommendation.
+
 ---
 
 ## What the ladder does not cover
@@ -90,11 +135,10 @@ kernels and scheduling assumptions do not.
 Worth knowing, and worth saying if asked, so the gaps are deliberate rather than
 invisible:
 
-* **Multi-GPU and multi-node serving** — tensor and pipeline parallelism,
-  collective bandwidth, what actually breaks at 70B. Lab 6 touches sharding
-  declaratively; nothing here measures a real distributed deployment.
-* **Speculative decoding** — draft models, acceptance rates, and why the win is
-  workload dependent.
+* **Multi-node serving** — collective bandwidth over a real network, what breaks
+  at 70B across hosts, disaggregated prefill/decode fleets. Lab 9 models tensor
+  parallelism arithmetically and lab 6 touches sharding declaratively; neither
+  runs a multi-host deployment.
 * **Structured output and constrained decoding** — grammar-constrained sampling
   and its throughput cost.
 * **Real production concerns** — autoscaling on queue depth, canaries, request

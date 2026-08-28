@@ -4,6 +4,9 @@ Six labs that teach inference serving by making you measure it. Each one is a
 Colab notebook that runs on a free T4, backed by a small tested Python package
 so the notebooks stay narrative and the logic stays honest.
 
+Labs 0, 7 and 8 run on a laptop. The rest want a GPU, and the free tier is
+genuinely enough for all of them.
+
 The organising idea: **predict on paper, then measure, then explain the gap.**
 A prediction within 2x means your mental model works. Off by 10x means a term is
 missing, and finding which one is the lesson.
@@ -16,13 +19,16 @@ the right to say it.
 
 | | Lab | Open | Runs on | What you walk away with |
 |---|---|---|---|---|
+| 0 | [Drills](notebooks/00_drills.ipynb) | [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/lsgrep/serv/blob/main/notebooks/00_drills.ipynb) | CPU | The whiteboard problems on random numbers, timed, with worked answers — fluency, not understanding |
 | 1 | [Serving under load](notebooks/01_serving_under_load.ipynb) | [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/lsgrep/serv/blob/main/notebooks/01_serving_under_load.ipynb) | T4 | vLLM under overload, live: queue depth, KV cache, TTFT. Throughput holds while goodput collapses |
 | 2 | [Hardware economics](notebooks/02_hardware_economics.ipynb) | [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/lsgrep/serv/blob/main/notebooks/02_hardware_economics.ipynb) | T4 → L4 → A100 | The same sweep on three cards. Cost per million tokens at your latency SLO |
 | 3 | [Napkin math + toy engine](notebooks/03_kv_math_and_toy_engine.ipynb) | [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/lsgrep/serv/blob/main/notebooks/03_kv_math_and_toy_engine.ipynb) | T4 (or CPU) | The KV formula, and a paged-block engine with continuous batching and preemption that proves it |
 | 4 | [QLoRA and the OOM postmortem](notebooks/04_qlora_oom_postmortem.ipynb) | [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/lsgrep/serv/blob/main/notebooks/04_qlora_oom_postmortem.ipynb) | T4 | A training memory budget, a deliberate OOM, and an allocator snapshot that names the culprit |
 | 5 | [Quantisation: quality and cost](notebooks/05_quantization_quality_cost.ipynb) | [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/lsgrep/serv/blob/main/notebooks/05_quantization_quality_cost.ipynb) | T4 (FP8 needs L4) | FP16 vs INT4-AWQ on accuracy, latency, VRAM, cost — plus the distributional check people skip |
 | 6 | [TPU serving in JAX](notebooks/06_tpu_jax_serving.ipynb) | [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/lsgrep/serv/blob/main/notebooks/06_tpu_jax_serving.ipynb) | Colab TPU | Why static shapes make serving a padding-bucket problem, and what that says about CUDA |
-
+| 7 | [Token economics](notebooks/07_token_economics.ipynb) | [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/lsgrep/serv/blob/main/notebooks/07_token_economics.ipynb) | CPU | Price a workload live: routing curves, break-even escalation, managed vs self-host with the FTE line visible |
+| 8 | [RAG and the eval harness](notebooks/08_rag_and_evals.ipynb) | [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/lsgrep/serv/blob/main/notebooks/08_rag_and_evals.ipynb) | CPU | Retrieval measured on its own, the retrieval-vs-synthesis triage, a calibrated judge and a regression gate |
+| 9 | [Serving levers, measured](notebooks/09_serving_levers.ipynb) | [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/lsgrep/serv/blob/main/notebooks/09_serving_levers.ipynb) | T4 / L4 | Prefix caching, chunked prefill, FP8 KV, speculative decoding, TP — each with the workload where it does nothing |
 Each notebook also carries that badge in its own first cell, so however you
 arrive at one, it is a click away from running.
 
@@ -51,7 +57,7 @@ Every notebook is idempotent, so a disconnect costs three minutes.
 ```bash
 git clone https://github.com/lsgrep/serv.git && cd serv
 pip install -e ".[plot,load,dev]"
-pytest -q                                    # 44 tests, CPU only, ~6s
+pytest -q                                    # 108 tests, CPU only, ~7s
 
 # no GPU? the scheduler still reproduces the dynamics
 python -c "
@@ -95,7 +101,11 @@ scheduling policy stay testable on a CPU runner:
 | `stats` | nothing | TTFT / TPOT / goodput, defined once so every lab agrees |
 | `toy.allocator`, `toy.scheduler` | nothing | Paged blocks, continuous batching, preemption — plus a GPU-free simulation of the death spiral |
 | `monitor`, `loadgen`, `serve` | network | Metrics poller, open/closed-loop generators, background `vllm serve` |
-| `evalkit` | network | Behavioural and distributional quantisation eval |
+| `pricing` | nothing | Token economics: a price table you maintain, routing curves, managed-vs-self-host |
+| `rag` | nothing | Chunking, BM25, hybrid fusion, recall@k — and the retrieval-vs-synthesis triage |
+| `drills` | nothing | Randomised whiteboard problems with worked answers |
+| `evalkit` | network | Quantisation eval, judge calibration, sample-size maths, the regression gate |
+| `gateway` | network | A thin multi-provider client, and a computed exit cost |
 | `memory` | torch | Training budget math, OOM snapshot recorder |
 | `toy.engine` | torch | The scheduler driving real GPT-2 forward passes |
 | `plots` | matplotlib | Chart defaults: fixed hue order, one axis per plot, red reserved for status |
@@ -104,12 +114,20 @@ The toy engine emits the same metric names vLLM does, so lab 1's dashboard
 function plots lab 3's toy engine without changes. That is deliberate: if you
 can read one chart you can read the other.
 
+[`docs/INTERVIEW_MAP.md`](docs/INTERVIEW_MAP.md) maps each claim worth making to
+the lab that produces the receipt for it — and lists, plainly, what these labs
+do not cover.
+
 ## Notes on the numbers
 
 * **Prices in `servlab.napkin.GPUS` are placeholders.** Edit `usd_per_hour` to
   what you actually pay — reserved and on-demand differ by more than the
   performance gaps these labs measure, so every cost conclusion sits downstream
   of that one field.
+* **`servlab.pricing.MODELS` is a snapshot you maintain**, stamped with
+  `VERIFIED_ON`. API pricing moves monthly and intro rates expire; `staleness()`
+  will warn you, but it cannot re-verify for you. Re-check before quoting
+  anything to anyone.
 * **Colab GPUs are shared and throttled.** Ratios measured the same day are
   useful; absolute numbers are not publication-grade. Re-measure on a dedicated
   box if a number matters commercially, and say so when you present it.

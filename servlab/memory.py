@@ -26,23 +26,45 @@ class TrainingBudget:
     gradients: float = 0.0
     optimizer: float = 0.0
     activations: float = 0.0
+    logits: float = 0.0
     overhead: float = 0.0
 
     @property
     def total(self) -> float:
-        return self.weights + self.gradients + self.optimizer + self.activations + self.overhead
+        return (self.weights + self.gradients + self.optimizer
+                + self.activations + self.logits + self.overhead)
 
     def __str__(self):
         rows = [("weights", self.weights), ("gradients", self.gradients),
                 ("optimizer", self.optimizer), ("activations", self.activations),
+                ("logits (output layer)", self.logits),
                 ("cuda ctx + fragmentation", self.overhead)]
         body = "\n".join(f"  {k:<26} {v / GIB:7.2f} GiB" for k, v in rows)
         return f"{body}\n  {'TOTAL':<26} {self.total / GIB:7.2f} GiB"
 
 
+def logits_bytes(batch, seq_len, vocab, dtype_bytes=4, upcast=True) -> float:
+    """The term that OOMs a fine-tune nobody expected to OOM.
+
+    The output layer materialises `batch x seq_len x vocab` logits, and the loss
+    is usually computed in fp32 — so a 128K vocab at 4K sequence length is about
+    2 GiB **per sample**, before the softmax makes a second copy. It scales with
+    vocabulary, which is why modern large-vocab models hit it and older ones did
+    not, and it is invisible in every "weights + gradients + optimizer" budget
+    people quote.
+
+    The fix is a chunked or fused cross-entropy that never holds the full logit
+    tensor: it computes the loss in vocabulary slices. If a run dies at long
+    sequence length with plenty of room for the model, look here first.
+    """
+    mult = 2 if upcast else 1   # fp32 copy alongside the model-dtype tensor
+    return batch * seq_len * vocab * dtype_bytes * mult
+
+
 def training_budget(params, *, weight_bits=16, trainable_params=None, optimizer="adamw",
                     grad_bits=16, batch=1, seq_len=512, n_layers=32, hidden=4096,
-                    activation_checkpointing=True, overhead_gb=1.5) -> TrainingBudget:
+                    activation_checkpointing=True, overhead_gb=1.5,
+                    vocab=0, fused_cross_entropy=False) -> TrainingBudget:
     """Where training memory goes.
 
     Full fine-tuning of a 7B model in fp16 needs ~14 GiB of weights, ~14 GiB of
@@ -59,11 +81,16 @@ def training_budget(params, *, weight_bits=16, trainable_params=None, optimizer=
     # on how many tensors the layer keeps. ~2 bytes x ~10 tensors is a decent
     # first cut, and checkpointing trades most of it for a recompute pass.
     act_per_token = hidden * n_layers * 2 * (1.5 if activation_checkpointing else 10)
+    # A fused/chunked cross-entropy keeps only a slice of the vocabulary live,
+    # so the term all but disappears — which is why it is the first fix, not a
+    # reason to shorten sequences.
+    logits = 0.0 if (not vocab or fused_cross_entropy) else logits_bytes(batch, seq_len, vocab)
     return TrainingBudget(
         weights=params * weight_bits / 8,
         gradients=trainable * grad_bits / 8,
         optimizer=trainable * opt_bytes_per_param,
         activations=batch * seq_len * act_per_token,
+        logits=logits,
         overhead=overhead_gb * GIB,
     )
 
@@ -152,7 +179,8 @@ def oom_hints(exc) -> str:
         "  2. gradient_checkpointing=True (trades ~30% step time for most of the activation memory)\n"
         "  3. shorter max_seq_length — activations are linear in it, attention worse\n"
         "  4. paged_adamw_8bit optimizer (moments to host memory on spike)\n"
-        "  5. lower LoRA rank / fewer target modules\n"
-        "  6. PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True if the snapshot shows fragmentation\n"
+        "  5. chunked/fused cross-entropy if vocab x seq is large — see logits_bytes()\n"
+        "  6. lower LoRA rank / fewer target modules\n"
+        "  7. PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True if the snapshot shows fragmentation\n"
         "     (a large reserved-minus-allocated gap) rather than genuine demand\n"
     )

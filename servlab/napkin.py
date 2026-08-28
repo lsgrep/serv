@@ -93,6 +93,10 @@ MODELS = {
     "qwen2.5-3b": ModelSpec("qwen2.5-3b", 36, 16, 2, 128, 2048, 11008, 151936, 3.09e9),
     "qwen2.5-7b": ModelSpec("qwen2.5-7b", 28, 28, 4, 128, 3584, 18944, 152064, 7.62e9),
     "mistral-7b": ModelSpec("mistral-7b", 32, 32, 8, 128, 4096, 14336, 32768, 7.25e9),
+    # 80 layers, 64 query heads over 8 KV heads -> 0.32 MiB/token in fp16.
+    # Worth knowing cold: it is the model most napkin questions are posed about.
+    "llama-3.3-70b": ModelSpec("llama-3.3-70b", 80, 64, 8, 128, 8192, 28672, 128256, 70.6e9),
+    "llama-3.1-405b": ModelSpec("llama-3.1-405b", 126, 128, 8, 128, 16384, 53248, 128256, 405.9e9),
 }
 
 GPUS = {
@@ -102,6 +106,11 @@ GPUS = {
     "A100-40GB": GPUSpec("A100-40GB", 40, 1555, 312, (8, 0), 1.80),
     "A100-80GB": GPUSpec("A100-80GB", 80, 2039, 312, (8, 0), 2.50),
     "H100-80GB": GPUSpec("H100-80GB", 80, 3350, 989, (9, 0), 3.50),
+    "H200": GPUSpec("H200", 141, 4800, 989, (9, 0), 4.00),
+    "B200": GPUSpec("B200", 192, 8000, 2250, (10, 0), 6.00),
+    # TPUs have no CUDA compute capability; (9, 9) is a stand-in that keeps the
+    # bf16/fp8 predicates true. Read the FLOPs as the announced FP8 figure.
+    "TPU-v7": GPUSpec("TPU-v7", 192, 7400, 4614, (9, 9), 0.0),
 }
 
 # Bytes per element, by the name you would pass to a serving stack.
@@ -267,6 +276,73 @@ def decode_step_time_s(gpu_spec, spec, batch=1, ctx_len=1024, weight_dtype="fp16
 def decode_tokens_per_s(gpu_spec, spec, batch=1, ctx_len=1024, **kw) -> float:
     """Aggregate output tokens/s across the batch."""
     return batch / decode_step_time_s(gpu_spec, spec, batch, ctx_len, **kw)
+
+
+def decode_step_time_tp_s(gpu_spec, spec, batch=1, ctx_len=1024, tp=1, weight_dtype="fp16",
+                          kv_dtype="fp16", bw_efficiency=0.7, allreduce_us_per_layer=6.0):
+    """Decode step time under tensor parallelism.
+
+    Each GPU holds 1/tp of the weights and 1/tp of the KV heads, so the memory
+    term divides cleanly. What does not divide is the all-reduce after every
+    attention and MLP block — two per layer — and that term is why TP buys
+    latency at the cost of efficiency, and why it stops scaling once you leave
+    NVLink.
+
+    `allreduce_us_per_layer` is the part to sanity-check against a measurement:
+    on NVLink it is single-digit microseconds; across PCIe or a network it can
+    be an order of magnitude worse, at which point TP is a trap.
+    """
+    if tp < 1:
+        raise ValueError("tp must be >= 1")
+    g, m = gpu(gpu_spec), model(spec)
+    per_gpu_bytes = decode_bytes_per_step(m, batch, ctx_len, weight_dtype, kv_dtype) / tp
+    mem_s = per_gpu_bytes / (g.mem_bw_gb_s * 1e9 * bw_efficiency)
+    comm_s = 0.0 if tp == 1 else m.n_layers * 2 * allreduce_us_per_layer * 1e-6
+    return mem_s + comm_s
+
+
+def tp_scaling(gpu_spec, spec, batch=1, ctx_len=1024, tps=(1, 2, 4, 8), **kw):
+    """Latency and efficiency against TP degree — the table to reason from.
+
+    `efficiency` is speedup / tp: 1.0 would be perfect scaling. When it falls
+    below ~0.6 you are paying for two GPUs and getting one and a bit, which is
+    a fine trade for a latency SLA and a bad one for a throughput fleet.
+    """
+    base = decode_step_time_tp_s(gpu_spec, spec, batch, ctx_len, tp=1, **kw)
+    rows = []
+    for tp in tps:
+        t = decode_step_time_tp_s(gpu_spec, spec, batch, ctx_len, tp=tp, **kw)
+        rows.append({"tp": tp, "step_s": t, "speedup": base / t,
+                     "efficiency": (base / t) / tp, "tok_s": batch / t})
+    return rows
+
+
+def fits_with_tp(gpu_spec, spec, weight_dtype="fp16", tp=1, seq_len=2048, concurrency=1, **kw):
+    """Does it fit across `tp` cards? Weights and KV both shard."""
+    g = gpu(gpu_spec)
+    sharded = GPUSpec(g.name, g.vram_gb * tp, g.mem_bw_gb_s, g.fp16_tflops, g.capability, g.usd_per_hour)
+    return fits(sharded, spec, weight_dtype, seq_len, concurrency, **kw)
+
+
+def spec_decode_speedup(acceptance_rate, gamma=4, draft_cost_ratio=0.15, verify_overhead=0.1):
+    """Expected TPOT speedup from speculative decoding.
+
+    The draft proposes `gamma` tokens; the target verifies them in one forward
+    pass. Expected accepted tokens per cycle for acceptance rate `a` is the
+    truncated geometric mean `(1 - a^(gamma+1)) / (1 - a)`, and one cycle costs
+    one target pass plus `gamma` draft passes.
+
+    The two things to say out loud: it is a *latency* optimisation that
+    consumes spare compute, so it degrades at high batch where there is none;
+    and the win collapses fast below ~0.6 acceptance, which is why the draft
+    model must match the target's distribution, not merely be small.
+    """
+    a = float(acceptance_rate)
+    if not 0 <= a <= 1:
+        raise ValueError("acceptance_rate must be in [0, 1]")
+    accepted = gamma + 1 if a == 1 else (1 - a ** (gamma + 1)) / (1 - a)
+    cycle_cost = 1 + verify_overhead + gamma * draft_cost_ratio
+    return accepted / cycle_cost
 
 
 def arithmetic_intensity(spec, batch, ctx_len=0, weight_dtype="fp16") -> float:
