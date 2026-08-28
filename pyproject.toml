@@ -1,0 +1,34 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "servlab"
+version = "0.1.0"
+description = "Lab kit for LLM serving: napkin math, load generation, live metrics, a toy paged engine."
+requires-python = ">=3.9"
+dependencies = []
+
+[project.optional-dependencies]
+# The notebooks install what they need in cell 1; these extras exist so a
+# terminal box can be provisioned in one shot.
+plot  = ["matplotlib>=3.7", "pandas>=2.0"]
+load  = ["httpx>=0.27"]
+serve = ["vllm>=0.6.0"]
+train = ["torch", "transformers>=4.44", "peft>=0.12", "bitsandbytes>=0.43", "trl>=0.9", "datasets", "accelerate"]
+dev   = ["pytest>=7", "ruff>=0.6"]
+
+[tool.setuptools.packages.find]
+include = ["servlab*"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py39"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+ignore = ["E501", "B008"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+filterwarnings = ["ignore::DeprecationWarning"]
