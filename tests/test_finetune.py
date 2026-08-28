@@ -83,7 +83,7 @@ def test_format_scorer_catches_missing_keys_and_bad_confidence():
 
 def test_format_scorer_flags_invented_citations(chunks):
     ids = [c.id for c in chunks]
-    good = '{"answer": "x", "citation": "%s", "confidence": "high"}' % ids[0]
+    good = json.dumps({"answer": "x", "citation": ids[0], "confidence": "high"})
     bad = '{"answer": "x", "citation": "handbook#9", "confidence": "high"}'
     assert ft.score_format(good, ids)["citation_valid"]
     assert not ft.score_format(bad, ids)["citation_valid"]
