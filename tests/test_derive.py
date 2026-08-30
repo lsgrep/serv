@@ -185,3 +185,55 @@ def test_a_derivation_is_usable_as_a_number():
 
 def test_an_empty_derivation_renders_without_crashing():
     assert "EMPTY" in str(Derivation("empty")).upper()
+
+
+# -- the report that prints its own arithmetic -----------------------------
+
+def test_memory_report_shows_the_substitution_for_every_line():
+    text = nk.memory_report("T4", "qwen2.5-3b", seq_len=2048)
+    # Each derived row carries the arithmetic that produced it.
+    assert "3.09e9 params x 2 B/param" in text
+    assert "16 GiB x 90% utilisation" in text
+    assert "2 x 36 layers x 2 kv_heads x 128 head_dim x 2 B" in text
+    assert "[GQA 8:1]" in text
+    assert "222,660 tokens / 2,048 per sequence" in text
+
+
+def test_memory_report_marks_the_assumed_number_as_assumed():
+    text = nk.memory_report("T4", "qwen2.5-3b")
+    activations = next(ln for ln in text.splitlines() if "activations" in ln)
+    assert "assumed" in activations
+    assert "= " not in activations      # not derived, so no equals sign
+
+
+def test_memory_report_shows_the_budget_going_negative_before_clamping():
+    text = nk.memory_report("T4", "llama-3.1-8b")
+    assert "clamped to zero" in text
+    assert "meaningless" in text        # and says the rows below it are worthless
+
+
+def test_memory_report_can_be_stripped_back_to_bare_numbers():
+    bare = nk.memory_report("T4", "qwen2.5-3b", show_work=False)
+    assert " = " not in bare            # no substitutions ("util=90%" in the header stays)
+    assert "worksheet" not in bare
+    assert "5.8 GiB" in bare            # the figures survive
+
+
+def test_memory_report_warns_when_under_one_sequence_fits():
+    # 222,660 tokens of capacity, so a 300K context does not fit even once.
+    text = nk.memory_report("T4", "qwen2.5-3b", seq_len=300_000)
+    assert "under one full-context sequence" in text
+
+
+def test_memory_report_notes_when_there_is_no_gqa():
+    assert "[no GQA]" in nk.memory_report("T4", "gpt2")
+    assert "[GQA 4:1]" in nk.memory_report("A100-80GB", "llama-3.1-8b")
+
+
+def test_report_and_derivation_agree():
+    # The convenience path and the shown-work path must not drift apart.
+    kv = nk.derive_kv_per_token(36, 2, 128, "fp16")
+    cap = nk.derive_capacity(vram_gb=16, params=3.09e9, kv_per_token=kv.value,
+                             ctx=2048, weight_bits=16, util=0.90, activation_gb=1.0)
+    report = nk.memory_report("T4", "qwen2.5-3b", seq_len=2048)
+    assert f"{cap.value:,.1f} sequences" in report

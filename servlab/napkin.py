@@ -711,22 +711,69 @@ def human_bytes(n) -> str:
     return f"{n:,.1f} TiB"  # pragma: no cover
 
 
-def memory_report(gpu_spec, spec, weight_dtype="fp16", kv_dtype="fp16", seq_len=2048, util=0.90, activation_gb=1.0) -> str:
-    """The block you paste into an interview answer."""
-    g, s = gpu(gpu_spec), model(spec)
-    w = weight_bytes(s, weight_dtype)
-    per_tok = kv_bytes_per_token(s, kv_dtype)
-    budget = kv_budget_bytes(g, s, weight_dtype, util, activation_gb)
-    seqs = max_concurrent_sequences(g, s, seq_len, weight_dtype=weight_dtype, kv_dtype=kv_dtype, util=util, activation_gb=activation_gb)
-    lines = [
-        f"{s.name} @ {weight_dtype} on {g.name} ({g.vram_gb:g} GB, util={util:.0%})",
-        f"  weights            {human_bytes(w)}",
-        f"  activations/slack  {human_bytes(activation_gb * GIB)}",
-        f"  KV budget          {human_bytes(budget)}",
-        f"  KV per token       {human_bytes(per_tok)}  (GQA {s.gqa_ratio:g}:1, kv={kv_dtype})",
-        f"  KV total capacity  {kv_capacity_tokens(g, s, weight_dtype, kv_dtype, util, activation_gb):,.0f} tokens",
-        f"  concurrency @ {seq_len:,} ctx   {seqs:,.1f} sequences",
+def memory_report(gpu_spec, spec, weight_dtype="fp16", kv_dtype="fp16", seq_len=2048,
+                  util=0.90, activation_gb=1.0, show_work=True) -> str:
+    """The sizing block, with the arithmetic that produced each line beside it.
+
+    Every row carries its own substitution, because a column of numbers teaches
+    you to trust a function and a column of substitutions teaches you the method.
+    Pass `show_work=False` for the bare figures once you no longer need them.
+
+    For the full step-by-step version — givens, working, sanity checks — use
+    `worksheet()`, which takes raw scalars instead of preset keys.
+    """
+    g, m = gpu(gpu_spec), model(spec)
+    wb = dtype_bytes(weight_dtype)
+    kvb = dtype_bytes(kv_dtype)
+
+    w = weight_bytes(m, weight_dtype)
+    act = activation_gb * GIB
+    usable = g.vram_gb * GIB * util
+    budget = kv_budget_bytes(g, m, weight_dtype, util, activation_gb)
+    per_tok = kv_bytes_per_token(m, kv_dtype)
+    capacity = kv_capacity_tokens(g, m, weight_dtype, kv_dtype, util, activation_gb)
+    seqs = max_concurrent_sequences(g, m, seq_len, weight_dtype=weight_dtype,
+                                    kv_dtype=kv_dtype, util=util, activation_gb=activation_gb)
+
+    rows = [
+        ("weights", human_bytes(w),
+         f"{m.params / 1e9:,.2f}e9 params x {wb:g} B/param"),
+        ("activations + ctx", human_bytes(act),
+         "~assumed: CUDA context, activations, graph pool — not derived"),
+        ("card, usable", human_bytes(usable),
+         f"{g.vram_gb:g} GiB x {util:.0%} utilisation"),
+        ("KV budget", human_bytes(budget),
+         f"{human_bytes(usable)} - {human_bytes(w)} - {human_bytes(act)}"
+         + ("   (negative, clamped to zero)" if usable - w - act < 0 else "")),
+        ("KV per token", human_bytes(per_tok),
+         f"2 x {m.n_layers} layers x {m.n_kv_heads} kv_heads x {m.head_dim} head_dim "
+         f"x {kvb:g} B" + (f"   [GQA {m.gqa_ratio:g}:1]" if m.gqa_ratio > 1 else "   [no GQA]")),
+        ("KV capacity", f"{capacity:,.0f} tokens",
+         f"{human_bytes(budget)} / {human_bytes(per_tok)}"),
+        (f"concurrency @ {seq_len:,}", f"{seqs:,.1f} sequences",
+         f"{capacity:,.0f} tokens / {seq_len:,} per sequence"),
     ]
+
+    label_w = max(len(r[0]) for r in rows) + 2
+    value_w = max(len(r[1]) for r in rows) + 2
+    head = f"{m.name} @ {weight_dtype} on {g.name} ({g.vram_gb:g} GB, util={util:.0%})"
+    lines = [head]
+    for label, value, work in rows:
+        line = f"  {label:<{label_w}}{value:>{value_w}}"
+        if show_work:
+            # A tilde marks a number that was assumed rather than derived.
+            line += f"   {work[1:]}" if work.startswith("~") else f"   = {work}"
+        lines.append(line)
+
     if budget <= 0:
         lines.append("  !! weights alone do not fit — quantise, shard, or pick a smaller model")
+        lines.append("     (every number below the KV budget line is meaningless here)")
+    elif seqs < 1:
+        lines.append("  !! under one full-context sequence fits — cap max_model_len rather "
+                     "than promising this context")
+    if show_work:
+        lines.append("")
+        lines.append("  Four numbers off the config (layers, kv_heads, head_dim, params) and")
+        lines.append("  two off the spec sheet (memory, and the utilisation you choose).")
+        lines.append("  nk.worksheet(...) shows the same chain step by step from raw scalars.")
     return "\n".join(lines)
