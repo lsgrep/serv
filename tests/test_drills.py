@@ -6,11 +6,33 @@ from servlab import drills
 @pytest.mark.parametrize("factory", drills.ALL)
 def test_every_drill_generates_and_reveals(factory, capsys):
     d = factory(seed=11)
-    assert d.question and d.steps
+    assert d.question
+    assert d.steps or d.derivation is not None
     d.reveal()
     out = capsys.readouterr().out
-    assert "ANSWER" in out
-    assert d.answer.split("·")[0].strip()[:6] in out
+    # Either shape of answer key must actually show the arithmetic.
+    assert "ANSWER" in out or "WORKING" in out
+    assert d.watch_for.split(".")[0][:20] in out
+
+
+@pytest.mark.parametrize("factory", drills.ALL)
+def test_no_drill_asks_you_to_recall_a_spec(factory):
+    """The point of the rewrite: a drill hands you numbers, it does not name a
+    card or a checkpoint and expect you to know its specifications."""
+    q = factory(seed=3).question.lower()
+    for name in ("h100", "a100", "t4 ", "llama", "qwen", "mistral", "gpt-2"):
+        assert name not in q, f"{factory.__name__} leaks a spec you would have to recall: {name}"
+
+
+@pytest.mark.parametrize("factory", (drills.kv_cache, drills.decode_ceiling,
+                                     drills.ttft, drills.capacity))
+def test_arithmetic_drills_show_a_full_derivation(factory, capsys):
+    d = factory(seed=5)
+    assert d.derivation is not None
+    d.reveal()
+    out = capsys.readouterr().out
+    assert "GIVEN" in out and "WORKING" in out
+    assert "<-" in out          # every given says where it was read from
 
 
 def test_drills_are_seeded_so_a_session_is_reproducible():

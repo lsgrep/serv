@@ -34,6 +34,7 @@ class Drill:
     steps: list = field(default_factory=list)
     watch_for: str = ""
     target_seconds: int = 180
+    derivation: object = None      # a Derivation or Worksheet: the worked answer
 
     def __post_init__(self):
         print(f"[{self.title}]  target: {self.target_seconds // 60} min, narrated\n")
@@ -41,6 +42,11 @@ class Drill:
         print("\n(work it on paper, out loud, then call .reveal())")
 
     def reveal(self):
+        if self.derivation is not None:
+            print(self.derivation)
+            if self.watch_for:
+                print(f"\n  Watch for: {self.watch_for}\n")
+            return self
         print("=" * 66)
         for i, step in enumerate(self.steps, 1):
             head, *rest = str(step).split("\n")
@@ -78,7 +84,7 @@ def kv_cache(seed=None) -> Drill:
     total = per_tok * ctx
     b = nk.dtype_bytes(bits)
 
-    return Drill(
+    drill = Drill(
         "Drill 1 — KV cache sizing",
         f"A model has {layers} layers, {q_heads} attention heads over {kv_heads} KV heads, "
         f"head_dim {head_dim}, KV cache in {bits}.\n\n"
@@ -96,101 +102,102 @@ def kv_cache(seed=None) -> Drill:
         watch_for="KV heads, not attention heads — that is the GQA discount, and using "
                   f"{q_heads} instead of {kv_heads} would overstate this by {q_heads // kv_heads}x.",
     )
+    drill.derivation = nk.derive_kv_per_token(layers, kv_heads, head_dim, bits, ctx_check=ctx)
+    return drill
 
 
 def decode_ceiling(seed=None) -> Drill:
-    """Drill 2: single-stream decode ceiling, and why batching exists."""
+    """Drill 2: decode throughput from bandwidth — given the numbers, not the card."""
     r = _rng(seed)
-    card = r.choice(["H100-80GB", "H200", "A100-80GB", "B200"])
-    model = r.choice(["llama-3.3-70b", "llama-3.1-8b", "qwen2.5-7b"])
-    dtype = r.choice(["fp16", "fp8"])
-    g, m = nk.GPUS[card], nk.MODELS[model]
-    w = nk.weight_bytes(m, dtype)
-    ceiling = g.mem_bw_gb_s * 1e9 / w
-    realistic = ceiling * 0.65
+    params = r.choice([7e9, 13e9, 34e9, 70e9, 141e9])
+    bits = r.choice([16, 8, 8, 4])
+    bw = r.choice([320, 900, 1555, 3350, 4800])
+    vram = r.choice([24, 40, 80, 141])
+    batch = r.choice([1, 8, 32])
+    ctx = r.choice([2048, 8192])
+    layers, kv_heads, head_dim = r.choice([(32, 8, 128), (60, 8, 128), (80, 8, 128), (48, 4, 128)])
+    kv_per_tok = 2 * layers * kv_heads * head_dim * 2
 
-    return Drill(
-        "Drill 2 — decode throughput ceiling",
-        f"{model} in {dtype} on one {card} ({g.mem_bw_gb_s:,.0f} GB/s HBM).\n\n"
-        f"  a) Single-stream decode ceiling in tokens/s?\n"
-        f"  b) What would you actually expect to measure?\n"
-        f"  c) Does it fit at all?",
-        answer=f"~{ceiling:.0f} tok/s theoretical, ~{realistic:.0f} realistic; "
-               f"weights are {nk.human_bytes(w)} on a {g.vram_gb:g} GB card "
-               f"({'fits' if w < g.vram_gb * GIB else 'DOES NOT FIT — shard or quantise'})",
-        steps=[
-            f"weights = {m.params / 1e9:.1f}B params x {nk.dtype_bytes(dtype):g} B = {nk.human_bytes(w)}",
-            "decode re-reads every weight per token, so ceiling = bandwidth / weight bytes",
-            f"{g.mem_bw_gb_s:,.0f} GB/s / {w / 1e9:.0f} GB = {ceiling:.0f} tok/s",
-            f"real kernels hit 60-70% of spec bandwidth -> ~{realistic:.0f} tok/s",
-            "at batch B the aggregate approaches B x that, until the KV read term catches up",
-        ],
-        watch_for="This is per stream, not per GPU. The batching argument is that the same "
-                  "weight read serves every sequence in the batch — that is the entire "
-                  "economic case for continuous batching.",
+    drill = Drill(
+        "Drill 2 — decode throughput",
+        f"You are handed these numbers and nothing else.\n\n"
+        f"  model:  {params/1e9:.0f}B parameters, {layers} layers, {kv_heads} KV heads, "
+        f"head_dim {head_dim}\n"
+        f"  serving: {bits}-bit weights, batch {batch}, {ctx:,}-token contexts\n"
+        f"  card:   {vram} GB, {bw:,} GB/s memory bandwidth\n\n"
+        f"  a) Aggregate output tokens/s?\n"
+        f"  b) Per sequence — would a user find that fast enough?\n"
+        f"  c) Does more batch still help here, or has KV taken over?",
+        watch_for="Weights are read once for the whole batch; KV is read per sequence. "
+                  "Which term dominates is the entire batching argument, and it flips as "
+                  "context grows.",
     )
+    drill.derivation = nk.derive_decode_speed(params, bw, batch, ctx, kv_per_tok, bits)
+    return drill
 
 
 def ttft(seed=None) -> Drill:
-    """Drill 3: prefill time from FLOPs, and what to do when it misses an SLA."""
+    """Drill 3: prefill time from FLOPs — the one place FLOPs bind."""
     r = _rng(seed)
-    prompt = r.choice([1024, 2048, 4096, 8192])
-    model = r.choice(["llama-3.3-70b", "llama-3.1-8b"])
-    tp = r.choice([1, 2, 4])
+    prompt = r.choice([512, 1024, 2048, 4096, 8192])
+    params = r.choice([3e9, 8e9, 34e9, 70e9])
+    tflops = r.choice([65, 121, 312, 989])
+    tp = r.choice([1, 1, 2, 4])
     mfu = r.choice([0.3, 0.4, 0.5])
-    m = nk.MODELS[model]
-    g = nk.GPUS["H100-80GB"]
-    flops = 2 * m.params * prompt
-    rate = tp * g.fp16_tflops * 1e12 * mfu
-    t = flops / rate
-    sla = 0.4
+    sla_ms = r.choice([300, 400, 1000])
 
-    return Drill(
+    drill = Drill(
         "Drill 3 — time to first token",
-        f"{prompt:,}-token prompt, {model}, TP={tp} on H100s ({g.fp16_tflops:,.0f} TFLOPS each), "
-        f"MFU {mfu:.0%}.\n\n"
+        f"  model:  {params/1e9:.0f}B parameters\n"
+        f"  prompt: {prompt:,} tokens\n"
+        f"  card:   {tflops:,} TFLOPS at your serving dtype, {tp}-way tensor parallel\n"
+        f"  assume: {mfu:.0%} model FLOPs utilisation\n\n"
         f"  a) Estimate TTFT.\n"
-        f"  b) The SLA is {sla * 1000:.0f} ms. What do you change, and what does it cost?",
-        answer=f"~{t * 1000:,.0f} ms — {'misses' if t > sla else 'meets'} a {sla * 1000:.0f} ms SLA",
-        steps=[
-            f"prefill FLOPs ~ 2 x params x tokens = 2 x {m.params / 1e9:.0f}e9 x {prompt:,} = {flops:.2e}",
-            f"usable rate = {tp} GPU x {g.fp16_tflops:,.0f} TFLOPS x {mfu:.0%} MFU = {rate:.2e} FLOP/s",
-            f"t = {flops:.2e} / {rate:.2e} = {t:.3f} s = {t * 1000:,.0f} ms",
-            "levers, cheapest first: prefix-cache the shared system prompt (often 50-80% of "
-            "the prompt, so near-free); chunked prefill so it stops blocking decode; raise TP "
-            "(halves time, costs efficiency — see tp_scaling); or a smaller model",
-        ],
-        watch_for="Prefill is compute bound — this is the one place FLOPs matter. Decode is "
-                  "bandwidth bound. Mixing up which regime you are in is the classic error.",
+        f"  b) The SLA is {sla_ms} ms. Do you meet it, and if not what do you change first?",
+        watch_for="Prefill is compute bound — the only place peak FLOPs matter. Decode is "
+                  "bandwidth bound. Say which regime you are in before you reach for a number.",
     )
+    drill.derivation = nk.derive_prefill_time(params, prompt, tflops, mfu, n_gpus=tp)
+    return drill
 
 
 def capacity(seed=None) -> Drill:
-    """Drill 4: how much concurrency does this box actually hold?"""
+    """Drill 4: an architecture and a card. Derive the deployment."""
     r = _rng(seed)
-    card = r.choice(["T4", "L4", "A100-40GB", "H100-80GB"])
-    model = r.choice(["qwen2.5-3b", "llama-3.1-8b", "llama-3.3-70b"])
-    dtype = r.choice(["fp16", "fp8"])
-    ctx = r.choice([2048, 4096, 8192])
-    fits = nk.kv_budget_bytes(card, model, dtype) > 0
-    seqs = nk.max_concurrent_sequences(card, model, ctx, weight_dtype=dtype, kv_dtype=dtype)
+    layers = r.choice([28, 32, 48, 60, 80])
+    kv_heads = r.choice([2, 4, 8, 8])
+    q_heads = kv_heads * r.choice([2, 4, 4, 8])
+    head_dim = r.choice([64, 128, 128])
+    hidden = q_heads * head_dim
+    params = r.choice([3e9, 8e9, 34e9, 70e9])
+    vram = r.choice([16, 24, 40, 80])
+    bw = r.choice([320, 600, 1555, 3350])
+    bits = r.choice([16, 16, 8, 4])
+    ctx = r.choice([2048, 4096, 8192, 32768])
 
-    return Drill(
-        "Drill 4 — concurrency ceiling",
-        f"{model} in {dtype} on a {card} ({nk.GPUS[card].vram_gb:g} GB), "
-        f"{ctx:,}-token contexts, 90% memory utilisation.\n\n"
-        f"  a) How many concurrent sequences?\n"
-        f"  b) What single change doubles it?",
-        answer=(f"~{seqs:,.0f} sequences" if fits else
-                "it does not fit — weights alone exceed the budget"),
-        steps=[
-            nk.memory_report(card, model, weight_dtype=dtype, kv_dtype=dtype, seq_len=ctx),
-            "doubling levers: halve max_model_len, or quantise the KV cache one step "
-            "(fp16 -> fp8), or quantise the weights to free budget for KV",
-        ],
-        watch_for="Context length and concurrency are the same knob. There is no third "
-                  "option, and memory is a cliff rather than a slope.",
+    drill = Drill(
+        "Drill 4 — size a deployment from a config",
+        f"A config.json and a spec sheet. Nothing is looked up.\n\n"
+        f"  num_hidden_layers      {layers}\n"
+        f"  num_attention_heads    {q_heads}\n"
+        f"  num_key_value_heads    {kv_heads}\n"
+        f"  hidden_size            {hidden}\n"
+        f"  head_dim               {head_dim}\n"
+        f"  parameters             {params/1e9:.0f}B, served at {bits}-bit\n\n"
+        f"  card: {vram} GB, {bw:,} GB/s\n"
+        f"  you must serve {ctx:,}-token contexts\n\n"
+        f"  a) KV bytes per token?\n"
+        f"  b) How many concurrent sequences fit?\n"
+        f"  c) What is the single cheapest change that doubles (b)?",
+        watch_for="num_attention_heads is in the config to catch you. The cache scales with "
+                  "num_key_value_heads.",
+        target_seconds=300,
     )
+    drill.derivation = nk.worksheet(
+        name=f"{params/1e9:.0f}B on a {vram} GB card",
+        n_layers=layers, n_kv_heads=kv_heads, head_dim=head_dim, params=params,
+        vram_gb=vram, mem_bw_gb_s=bw, ctx=ctx, batch=16, weight_bits=bits)
+    return drill
 
 
 def cost(seed=None) -> Drill:

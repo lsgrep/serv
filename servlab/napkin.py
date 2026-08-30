@@ -14,6 +14,8 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass
 
+from .derive import Derivation, Given, Worksheet
+
 GIB = 1024**3
 MIB = 1024**2
 
@@ -399,6 +401,301 @@ def cost_per_million_tokens(gpu_spec, tokens_per_s) -> float:
     if tokens_per_s <= 0:
         return math.inf
     return g.usd_per_hour / 3600 / tokens_per_s * 1e6
+
+
+# --------------------------------------------------------------------------
+# Derivations — the same arithmetic, with the working shown
+#
+# Every function below takes *raw scalars*, not preset keys. That is deliberate.
+# In a real sizing conversation nobody hands you `MODELS["llama-3.3-70b"]`; they
+# hand you a config.json and a spec sheet, and the skill being tested is whether
+# you can put those numbers in the right places. The presets in this module are
+# for checking your answer afterwards, not for producing it.
+# --------------------------------------------------------------------------
+
+CONFIG_FIELDS = {
+    "num_hidden_layers": "layers — the multiplier on everything in the KV cache",
+    "num_attention_heads": "query heads — used for head_dim, NOT for the cache size",
+    "num_key_value_heads": "KV heads — THIS is what the cache scales with (GQA). "
+                           "Absent means it equals num_attention_heads (no GQA)",
+    "head_dim": "head dimension, if stated. Otherwise hidden_size / num_attention_heads "
+                "— several modern configs set it explicitly and it is not always the ratio",
+    "hidden_size": "model width; feeds head_dim and the parameter estimate",
+    "intermediate_size": "FFN width; parameter estimate only",
+    "vocab_size": "embedding and output layer size; matters for training memory (logits)",
+    "torch_dtype": "what the weights ship in — and the thing that breaks vLLM on a T4 "
+                   "when it says bfloat16 and the card is Turing",
+    "max_position_embeddings": "the context ceiling the weights support, not what you must serve",
+}
+
+
+def config_guide() -> str:
+    """Which fields in a config.json you actually need, and the trap in each.
+
+    Read this before deriving anything from a model you have not seen. The whole
+    napkin exercise is four numbers out of a JSON file; knowing which four, and
+    which one people take from the wrong field, is most of the skill.
+    """
+    lines = ["READING A config.json FOR SIZING", "=" * 74, ""]
+    for k, v in CONFIG_FIELDS.items():
+        lines.append(f"  {k}")
+        lines.append(f"      {v}")
+    lines += ["", "  The single most common error: using num_attention_heads where the",
+              "  formula wants num_key_value_heads. On a Llama-3 that overstates the KV",
+              "  cache by 4x, and every capacity number downstream inherits the error."]
+    return "\n".join(lines)
+
+
+def _bytes_per_param(bits):
+    """Accept either a bit count (16, 8, 4) or a dtype name ("fp16", "awq")."""
+    if isinstance(bits, str):
+        return dtype_bytes(bits)
+    return bits / 8
+
+
+def from_config(cfg, weight_bits=16, kv_dtype="fp16", ctx=8192, params=None) -> Derivation:
+    """Read a config.json and show which field fed which term.
+
+    The realistic version of the exercise: you are handed a model you have never
+    sized, you open its config, and you have to know which four numbers matter.
+    Pass the parsed JSON (or a HuggingFace config object) and this prints the
+    mapping *and* the derivation, so a wrong field is visible rather than baked
+    into an answer.
+    """
+    get = (lambda k, d=None: cfg.get(k, d)) if isinstance(cfg, dict) else (lambda k, d=None: getattr(cfg, k, d))
+    n_heads = get("num_attention_heads") or get("n_head")
+    n_layers = get("num_hidden_layers") or get("n_layer")
+    hidden = get("hidden_size") or get("n_embd")
+    n_kv = get("num_key_value_heads") or n_heads
+    stated_head_dim = get("head_dim")
+    head_dim = stated_head_dim or (hidden // n_heads)
+
+    d = derive_kv_per_token(n_layers, n_kv, head_dim, kv_dtype, ctx_check=ctx)
+    d.title = f"KV cache per token — {get('_name_or_path', 'this config')}"
+    d.givens.insert(0, Given("num_attention_heads", n_heads, "",
+                             "read, but NOT used in this formula — it is the GQA trap"))
+    if stated_head_dim:
+        d.check(f"head_dim was stated explicitly as {stated_head_dim}; hidden_size/heads would "
+                f"have given {hidden // n_heads} — always prefer the stated value")
+    else:
+        d.check(f"head_dim not stated, so hidden_size / num_attention_heads = "
+                f"{hidden} / {n_heads} = {head_dim}")
+    if n_kv == n_heads:
+        d.check("num_key_value_heads equals num_attention_heads: no GQA, so the cache is as "
+                "large as it gets for this shape")
+    else:
+        d.check(f"GQA {n_heads // n_kv}:1 — using num_attention_heads here would have "
+                f"overstated the cache by {n_heads // n_kv}x")
+    dtype = get("torch_dtype")
+    if dtype and "bfloat16" in str(dtype):
+        d.check("torch_dtype is bfloat16 — this is the field that makes vLLM refuse to "
+                "start on a pre-Ampere card unless you pass --dtype half")
+    return d
+
+
+def derive_kv_per_token(n_layers, n_kv_heads, head_dim, dtype="fp16", ctx_check=32768):
+    """KV bytes per token, shown.
+
+    The one formula to be able to write from memory. Everything about serving
+    capacity is downstream of it.
+    """
+    d = Derivation("KV cache per token",
+                   formula="2 (K and V) x layers x kv_heads x head_dim x bytes_per_element")
+    b = dtype_bytes(dtype)
+    d.given("layers", n_layers, source="config.json: num_hidden_layers")
+    d.given("kv heads", n_kv_heads,
+            source="config.json: num_key_value_heads  (NOT num_attention_heads)")
+    d.given("head dim", head_dim,
+            source="config.json: head_dim, else hidden_size / num_attention_heads")
+    d.given("bytes per element", b, source=str(dtype))
+
+    per_layer = d.step("K and V for one layer",
+                       f"2 x {n_kv_heads} x {head_dim} x {b:g}", 2 * n_kv_heads * head_dim * b, "B")
+    total = d.step("across all layers", f"{per_layer:,.0f} x {n_layers}",
+                   per_layer * n_layers, "B")
+    d.result_label = "KV per token"
+    d.check(f"{human_bytes(total)}/token x {ctx_check:,} ctx = "
+            f"{human_bytes(total * ctx_check)} for ONE request at full context")
+    if n_kv_heads == 0:
+        d.warn("kv_heads of 0 is not possible — re-read the config")
+    return d
+
+
+def derive_weight_bytes(params, bits=16, name="weights"):
+    """Parameters to bytes. Trivial, and worth writing out because the bit-width
+    is where quantisation enters every other calculation."""
+    d = Derivation(f"{name} in memory", formula="parameters x bytes_per_parameter")
+    b = _bytes_per_param(bits)
+    d.given("parameters", params / 1e9, "B params", "the model card, or estimated from shapes")
+    d.given("bytes per parameter", b,
+            source=f"{bits}-bit  (fp16 = 2 B, fp8/int8 = 1 B, int4 = 0.5 B)")
+    total = d.step("weights", f"{params/1e9:,.1f}e9 x {b:g}", params * b, "B")
+    d.result_label = "weights"
+    d.check(f"{human_bytes(total)} — compare against the card before going further")
+    return d
+
+
+def derive_capacity(vram_gb, params, kv_per_token, ctx, weight_bits=16, util=0.90,
+                    activation_gb=1.0):
+    """VRAM to concurrent sequences, with every subtraction visible.
+
+    The order matters and is worth narrating: the card is not all yours, weights
+    come off the top, activations and the CUDA context take a slice, and what is
+    left is divided by the per-token cost times the context length.
+    """
+    d = Derivation("concurrency from memory",
+                   formula="(vram x util - weights - activations) / (kv_per_token x ctx)")
+    b = _bytes_per_param(weight_bits)
+    d.given("card memory", vram_gb, "GiB",
+            "spec sheet. Vendors quote decimal GB; the allocator works in GiB, and the "
+            "~7% gap is well inside this estimate's error bars")
+    d.given("memory utilisation", util, source="vLLM --gpu-memory-utilization")
+    d.given("parameters", params / 1e9, "B params", "model card")
+    d.given("bytes per parameter", b,
+            source=f"{weight_bits}-bit weights  (fp16 = 2 B, fp8 = 1 B, int4 = 0.5 B)")
+    d.given("activations + CUDA context", activation_gb, "GiB",
+            "~1 GiB small model; more with a large --max-num-batched-tokens")
+    d.given("KV per token", kv_per_token, "B", "derived above")
+    d.given("context length", ctx, "tokens", "what you commit to serving")
+
+    usable = d.step("memory the engine may claim", f"{vram_gb:g} GiB x {util:g}",
+                    vram_gb * GIB * util, "B")
+    weights = d.step("weights", f"{params/1e9:,.1f}e9 x {b:g}", params * b, "B")
+    budget = d.step("left for KV cache",
+                    f"{human_bytes(usable)} - {human_bytes(weights)} - {activation_gb:g} GiB",
+                    max(usable - weights - activation_gb * GIB, 0.0), "B")
+    per_seq = d.step("KV for one full-context sequence",
+                     f"{kv_per_token:,.0f} B x {ctx:,}", kv_per_token * ctx, "B")
+    seqs = d.step("concurrent sequences", f"{human_bytes(budget)} / {human_bytes(per_seq)}",
+                  (budget / per_seq) if per_seq else 0.0, "sequences")
+    d.result_label = "concurrency"
+    d.result_unit = "sequences"
+
+    if budget <= 0:
+        d.warn("the weights alone do not fit — quantise, shard across GPUs, or pick a "
+               "smaller model. Every number below this line is meaningless.")
+    elif seqs < 1:
+        d.warn("under one full-context sequence fits. The model runs, but only for short "
+               "prompts — cap max_model_len rather than promising this context.")
+    else:
+        d.check(f"halving context to {ctx//2:,} would give ~{seqs*2:,.0f} sequences — "
+                "context and concurrency are the same knob")
+    return d
+
+
+def derive_decode_speed(params, mem_bw_gb_s, batch=1, ctx=1024, kv_per_token=0,
+                        weight_bits=16, efficiency=0.7):
+    """Decode throughput from bandwidth. The other half of every sizing answer.
+
+    The narration that matters: a decode step re-reads every weight to produce
+    one token *per sequence*, so the weight read is amortised across the batch
+    and the KV read is not.
+    """
+    d = Derivation("decode speed from bandwidth",
+                   formula="tokens/s = batch / ((weights + batch x ctx x kv_per_token) "
+                           "/ (bandwidth x efficiency))")
+    b = _bytes_per_param(weight_bits)
+    d.given("parameters", params / 1e9, "B params", "model card")
+    d.given("bytes per parameter", b, source=f"{weight_bits}-bit weights")
+    d.given("memory bandwidth", mem_bw_gb_s, "GB/s", "spec sheet")
+    d.given("achieved fraction of it", efficiency, source="0.6-0.8 in practice; measure it")
+    d.given("batch size", batch, "sequences", "what the scheduler is actually running")
+    d.given("context length", ctx, "tokens", "average, not maximum")
+    d.given("KV per token", kv_per_token, "B", "derived above")
+
+    weights = d.step("weight bytes read every step", f"{params/1e9:,.1f}e9 x {b:g}",
+                     params * b, "B", "read once for the whole batch — this is why batching works")
+    kv = d.step("KV bytes read every step",
+                f"{batch} x {ctx:,} x {kv_per_token:,.0f}", batch * ctx * kv_per_token, "B",
+                "grows with batch AND context — this is what eventually stops batching helping")
+    total = d.step("bytes per step", f"{human_bytes(weights)} + {human_bytes(kv)}",
+                   weights + kv, "B")
+    step_s = d.step("time per step", f"{human_bytes(total)} / ({mem_bw_gb_s:,.0f} GB/s x {efficiency:g})",
+                    total / (mem_bw_gb_s * 1e9 * efficiency), "s")
+    tps = d.step("tokens per second", f"{batch} / {step_s*1000:,.2f} ms", batch / step_s if step_s else 0.0,
+                 "tok/s")
+    d.result_label = "aggregate throughput"
+    d.result_unit = "tok/s"
+    d.check(f"per sequence that is {tps/batch if batch else 0:,.1f} tok/s "
+            f"({'above' if tps/max(batch,1) > 20 else 'below'} the ~20 tok/s reading speed "
+            "a user notices)")
+    share = kv / total if total else 0
+    d.check(f"KV is {share:.0%} of the bytes moved — "
+            + ("weights still dominate, so more batch is nearly free"
+               if share < 0.4 else "KV now dominates, so more batch buys little"))
+    return d
+
+
+def derive_prefill_time(params, prompt_tokens, tflops, mfu=0.4, n_gpus=1):
+    """Time to first token, from FLOPs. The one place FLOPs are the binding term."""
+    d = Derivation("time to first token",
+                   formula="TTFT = (2 x params x prompt_tokens) / (FLOPS x MFU x gpus)")
+    d.given("parameters", params / 1e9, "B params", "model card")
+    d.given("prompt length", prompt_tokens, "tokens", "your traffic, not the maximum")
+    d.given("peak compute", tflops, "TFLOPS", "spec sheet, at the dtype you are serving")
+    d.given("GPUs", n_gpus, source="tensor parallel degree")
+    d.given("model FLOPs utilisation", mfu, source="0.3-0.5 realistically")
+
+    flops = d.step("prefill FLOPs", f"2 x {params/1e9:,.1f}e9 x {prompt_tokens:,}",
+                   2 * params * prompt_tokens, "FLOP",
+                   "~2 FLOPs per parameter per token; ignores attention's quadratic term")
+    rate = d.step("usable compute", f"{n_gpus} x {tflops:,.0f}e12 x {mfu:g}",
+                  n_gpus * tflops * 1e12 * mfu, "FLOP/s")
+    t = d.step("TTFT", f"{flops:.3g} / {rate:.3g}", flops / rate if rate else 0.0, "s")
+    d.result_label = "TTFT"
+    d.result_unit = "s"
+    d.check(f"{t*1000:,.0f} ms — "
+            + ("feels instant" if t < 0.3 else
+               "acceptable for chat" if t < 1.0 else
+               "a user will notice this; prefix-cache the shared prompt or raise TP"))
+    d.check("if the prompt shares a long system prefix, most of this disappears with "
+            "prefix caching — measure the shared share before optimising anything else")
+    return d
+
+
+def derive_cost_per_million(usd_per_hour, tokens_per_s, label="output tokens"):
+    """Throughput to unit economics."""
+    d = Derivation("cost per million tokens",
+                   formula="$/hr / 3600 / tokens_per_s x 1e6")
+    d.given("instance price", usd_per_hour, "USD/hour", "YOUR contract, not a list price")
+    d.given("throughput", tokens_per_s, "tok/s", "measured, at your operating point")
+    per_s = d.step("cost per second", f"{usd_per_hour:g} / 3600", usd_per_hour / 3600, "USD/s")
+    per_tok = d.step("cost per token", f"{per_s:.3g} / {tokens_per_s:,.0f}",
+                     per_s / tokens_per_s if tokens_per_s else float("inf"), "USD")
+    d.step(f"cost per 1M {label}", f"{per_tok:.3g} x 1e6", per_tok * 1e6, "USD")
+    d.result_label = "cost"
+    d.result_unit = "USD per 1M tokens"
+    d.check("compare against a managed API's per-million price before concluding anything "
+            "— and remember this number excludes the people who run the fleet")
+    return d
+
+
+def worksheet(*, name="model", n_layers, n_kv_heads, head_dim, params, vram_gb, mem_bw_gb_s,
+              tflops=0, ctx=4096, batch=16, prompt_tokens=1024, weight_bits=16, kv_dtype="fp16",
+              util=0.90, activation_gb=1.0, efficiency=0.7, mfu=0.4, usd_per_hour=0.0,
+              n_gpus=1) -> Worksheet:
+    """The whole sizing answer from raw numbers, with every step shown.
+
+    This is the deliverable: hand it an architecture and a spec sheet — no preset
+    keys, no lookups — and it produces the chain a good answer walks, in order.
+    Read the output aloud and you have given the answer.
+
+        worksheet(name="mystery 34B",
+                  n_layers=60, n_kv_heads=8, head_dim=128, params=34e9,
+                  vram_gb=80, mem_bw_gb_s=3350, tflops=989,
+                  ctx=8192, batch=32, weight_bits=8, usd_per_hour=3.50)
+    """
+    ws = Worksheet(f"sizing {name}")
+    kv = ws.add(derive_kv_per_token(n_layers, n_kv_heads, head_dim, kv_dtype, ctx_check=ctx))
+    ws.add(derive_weight_bytes(params, weight_bits))
+    ws.add(derive_capacity(vram_gb, params, kv.value, ctx, weight_bits, util, activation_gb))
+    speed = ws.add(derive_decode_speed(params, mem_bw_gb_s, batch, ctx, kv.value,
+                                       weight_bits, efficiency))
+    if tflops:
+        ws.add(derive_prefill_time(params, prompt_tokens, tflops, mfu, n_gpus))
+    if usd_per_hour:
+        ws.add(derive_cost_per_million(usd_per_hour, speed.value))
+    return ws
 
 
 # --------------------------------------------------------------------------

@@ -19,7 +19,8 @@ running a lab — to find the sentence it entitles you to say.
 | "GQA is a repeat at inference — it buys concurrency, not speed" | The broadcast, and 80 GiB vs 10 GiB at 32K context | [11](../notebooks/11_attention_from_scratch.ipynb) |
 | "Flash attention saves memory traffic, not FLOPs" | Online softmax implemented, tiled output matched to naive, both costs printed | [11](../notebooks/11_attention_from_scratch.ipynb) |
 | "Prefix caching only works on prefixes because positions are rotated into the keys" | RoPE scores at the right and wrong offsets | [11](../notebooks/11_attention_from_scratch.ipynb) |
-| "Give me a config and a GPU and I'll tell you the concurrency ceiling" | `napkin.memory_report` against what the engine actually allocated | [03](../notebooks/03_kv_math_and_toy_engine.ipynb), [00](../notebooks/00_drills.ipynb) |
+| "Give me a config and a GPU and I'll tell you the concurrency ceiling" | `nk.worksheet()` on raw scalars, checked against what the engine actually allocated | [03](../notebooks/03_kv_math_and_toy_engine.ipynb), [00](../notebooks/00_drills.ipynb) |
+| "Hand me a config.json for something I've never sized and I'll derive it" | `nk.from_config()` showing which field feeds which term, and which one is the trap | [03](../notebooks/03_kv_math_and_toy_engine.ipynb), [FORMULAS](FORMULAS.md) |
 | "GQA is a KV-cache optimisation — it's KV heads, not attention heads" | The 4x error, drawn, on four real model configs | [03](../notebooks/03_kv_math_and_toy_engine.ipynb) |
 | "Batching is nearly free until the KV term catches up" | Arithmetic intensity against the ridge point, then the measured sweep | [02](../notebooks/02_hardware_economics.ipynb), [03](../notebooks/03_kv_math_and_toy_engine.ipynb) |
 | "Retrieval fixes knowledge; fine-tuning fixes style" | The 34-of-40 triage, run on a corpus you can show | [08](../notebooks/08_rag_and_evals.ipynb) |

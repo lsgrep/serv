@@ -13,6 +13,25 @@ napkin math assumes and lab 1's failures are made of. After those three, the
 rest can be taken in any order.
 
 The organising idea: **predict on paper, then measure, then explain the gap.**
+
+Every formula shows its working. Nobody should memorise a card's bandwidth or a
+model's layer count — those are handed to you. What is being tested is whether
+you can put given numbers in the right places:
+
+```python
+from servlab import napkin as nk
+
+nk.from_config(json.load(open("config.json")))   # which field feeds which term
+nk.worksheet(name="a 34B nobody has a preset for",
+             n_layers=60, n_kv_heads=8, head_dim=128, params=34e9,
+             vram_gb=80, mem_bw_gb_s=3350, tflops=989,
+             ctx=8192, batch=32, weight_bits=8, usd_per_hour=3.50)
+```
+
+prints the whole sizing chain — givens, substitutions, sanity checks — from raw
+scalars only. [`docs/FORMULAS.md`](docs/FORMULAS.md) is the same chain as a
+reference: each formula, where every term is read from, and the check that
+catches a unit error before it reaches a slide.
 A prediction within 2x means your mental model works. Off by 10x means a term is
 missing, and finding which one is the lesson.
 
@@ -64,7 +83,7 @@ Every notebook is idempotent, so a disconnect costs three minutes.
 ```bash
 git clone https://github.com/lsgrep/serv.git && cd serv
 pip install -e ".[plot,load,dev]"
-pytest -q                                    # 149 tests, CPU only, ~7s
+pytest -q                                    # 182 tests, CPU only, ~8s
 
 # no GPU? the scheduler still reproduces the dynamics
 python -c "
@@ -103,7 +122,8 @@ scheduling policy stay testable on a CPU runner:
 
 | module | needs | what it is |
 |---|---|---|
-| `napkin` | nothing | KV-cache and roofline math, model and GPU specs, queueing |
+| `napkin` | nothing | KV-cache and roofline math, plus `derive_*` / `worksheet` — the same arithmetic with the working shown |
+| `derive` | nothing | The show-your-work renderer: givens, substitutions, sanity checks |
 | `prometheus` | nothing | `/metrics` parser with vLLM's naming (both spellings) |
 | `stats` | nothing | TTFT / TPOT / goodput, defined once so every lab agrees |
 | `toy.allocator`, `toy.scheduler` | nothing | Paged blocks, continuous batching, preemption — plus a GPU-free simulation of the death spiral |
@@ -125,7 +145,8 @@ can read one chart you can read the other.
 
 [`docs/INTERVIEW_MAP.md`](docs/INTERVIEW_MAP.md) maps each claim worth making to
 the lab that produces the receipt for it — and lists, plainly, what these labs
-do not cover.
+do not cover. [`docs/FORMULAS.md`](docs/FORMULAS.md) is the derive-don't-recall
+sheet.
 
 ## Notes on the numbers
 
