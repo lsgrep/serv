@@ -83,7 +83,7 @@ Every notebook is idempotent, so a disconnect costs three minutes.
 ```bash
 git clone https://github.com/lsgrep/serv.git && cd serv
 pip install -e ".[plot,load,dev]"
-pytest -q                                    # 189 tests, CPU only, ~8s
+pytest -q                                    # 197 tests, CPU only, ~8s
 
 # no GPU? the scheduler still reproduces the dynamics
 python -c "
